@@ -1,0 +1,72 @@
+name: release-to-test
+on:
+  push:
+    branches: [main]
+    paths: ['src/solutions/**', 'deployment-settings/**']
+  workflow_dispatch:
+concurrency: release-test
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      VERSION_SUFFIX: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/powerplatform-actions/actions-install@v1
+      - name: Stamp build number into Solution.xml
+        shell: pwsh
+        run: |
+          foreach ($s in 'ContosoProjectA') {
+            ./scripts/Set-SolutionVersion.ps1 -Solution $s `
+              -Build $env:VERSION_SUFFIX
+          }
+      - name: Pack Project A
+        uses: microsoft/powerplatform-actions/pack-solution@v1
+        with:
+          solution-folder: src/solutions/ContosoProjectA
+          solution-file: out/ContosoProjectA_managed.zip
+          solution-type: Managed
+      - uses: actions/upload-artifact@v4
+        with:
+          name: managed-solutions-${{ github.run_number }}
+          path: |
+            out/*.zip
+            deployment-settings/*.json
+  deploy-test:
+    needs: build
+    runs-on: windows-latest
+    environment: Test
+    strategy:
+      max-parallel: 1
+      matrix:
+        solution: [ContosoProjectA]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: managed-solutions-${{ github.run_number }}
+      - uses: microsoft/powerplatform-actions/actions-install@v1
+      - name: Import ${{ matrix.solution }} (stage and upgrade)
+        uses: microsoft/powerplatform-actions/import-solution@v1
+        with:
+          environment-url: ${{ secrets.ENV_URL }}
+          app-id: ${{ secrets.PP_APP_ID }}
+          client-secret: ${{ secrets.PP_CLIENT_SECRET }}
+          tenant-id: ${{ secrets.PP_TENANT_ID }}
+          solution-file: out/${{ matrix.solution }}_managed.zip
+          use-deployment-settings-file: true
+          deployment-settings-file: >-
+            deployment-settings/settings-test.json
+          stage-and-upgrade: true
+          activate-plugins: true
+          run-asynchronously: true
+  smoke-test:
+    needs: deploy-test
+    runs-on: windows-latest
+    environment: Test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Smoke tests and flow activation check
+        shell: pwsh
+        run: >
+          ./scripts/Invoke-SmokeTests.ps1
+          -EnvUrl '${{ secrets.ENV_URL }}'

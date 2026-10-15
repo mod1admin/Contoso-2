@@ -1,0 +1,60 @@
+name: pr-validation
+on:
+  pull_request:
+    branches: [main]
+    paths: ['src/solutions/**', 'scripts/**', 'deployment-settings/**']
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - solution: ContosoSharedCore
+            prefix: ccore
+          - solution: ContosoProjectA
+            prefix: cpa
+          - solution: ContosoProjectB
+            prefix: cpb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/powerplatform-actions/actions-install@v1
+      - name: build
+        uses: microsoft/powerplatform-actions/pack-solution@v1
+        with:
+          solution-folder: src/solutions/${{ matrix.solution }}
+          solution-file: out/${{ matrix.solution }}_managed.zip
+          solution-type: Managed
+      - name: boundary-check
+        shell: pwsh
+        run: >
+          ./scripts/Test-SolutionBoundaries.ps1
+          -SolutionFolder src/solutions/${{ matrix.solution }}
+          -ExpectedPrefix ${{ matrix.prefix }}
+      - name: solution-checker
+        uses: microsoft/powerplatform-actions/check-solution@v1
+        with:
+          environment-url: ${{ vars.BUILD_ENV_URL }}
+          app-id: ${{ secrets.PP_APP_ID }}
+          client-secret: ${{ secrets.PP_CLIENT_SECRET }}
+          tenant-id: ${{ secrets.PP_TENANT_ID }}
+          path: out/${{ matrix.solution }}_managed.zip
+          geo: Europe
+          error-level: HighIssueCount
+          error-threshold: 0
+          fail-on-analysis-error: true
+      - name: import-to-build
+        uses: microsoft/powerplatform-actions/import-solution@v1
+        with:
+          environment-url: ${{ vars.BUILD_ENV_URL }}
+          app-id: ${{ secrets.PP_APP_ID }}
+          client-secret: ${{ secrets.PP_CLIENT_SECRET }}
+          tenant-id: ${{ secrets.PP_TENANT_ID }}
+          solution-file: out/${{ matrix.solution }}_managed.zip
+          use-deployment-settings-file: true
+          deployment-settings-file: >-
+            deployment-settings/settings-test.json
+          force-overwrite: true
+          run-asynchronously: true
