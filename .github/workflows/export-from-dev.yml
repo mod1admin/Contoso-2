@@ -1,0 +1,79 @@
+name: export-from-dev
+on:
+  workflow_dispatch:
+    inputs:
+      solution_name:
+        description: 'Solution unique name'
+        required: true
+        type: choice
+        options: [ContosoSharedCore, ContosoProjectA, ContosoProjectB]
+      dev_env_url:
+        description: 'Developer environment URL'
+        required: true
+      ticket:
+        description: 'Ticket ID, for example CM-142'
+        required: false
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  export:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Power Platform tools
+        uses: microsoft/powerplatform-actions/actions-install@v1
+      - name: Confirm identity
+        uses: microsoft/powerplatform-actions/who-am-i@v1
+        with:
+          environment-url: ${{ inputs.dev_env_url }}
+          app-id: ${{ secrets.PP_APP_ID }}
+          client-secret: ${{ secrets.PP_CLIENT_SECRET }}
+          tenant-id: ${{ secrets.PP_TENANT_ID }}
+      - name: Export unmanaged solution
+        uses: microsoft/powerplatform-actions/export-solution@v1
+        with:
+          environment-url: ${{ inputs.dev_env_url }}
+          app-id: ${{ secrets.PP_APP_ID }}
+          client-secret: ${{ secrets.PP_CLIENT_SECRET }}
+          tenant-id: ${{ secrets.PP_TENANT_ID }}
+          solution-name: ${{ inputs.solution_name }}
+          solution-output-file: out/${{ inputs.solution_name }}.zip
+          managed: false
+      - name: Export managed solution
+        uses: microsoft/powerplatform-actions/export-solution@v1
+        with:
+          environment-url: ${{ inputs.dev_env_url }}
+          app-id: ${{ secrets.PP_APP_ID }}
+          client-secret: ${{ secrets.PP_CLIENT_SECRET }}
+          tenant-id: ${{ secrets.PP_TENANT_ID }}
+          solution-name: ${{ inputs.solution_name }}
+          solution-output-file: out/${{ inputs.solution_name }}_managed.zip
+          managed: true
+          overwrite: true
+          run-asynchronously: true
+      - name: Unpack to source folder
+        uses: microsoft/powerplatform-actions/unpack-solution@v1
+        with:
+          solution-file: out/${{ inputs.solution_name }}.zip
+          solution-folder: src/solutions/${{ inputs.solution_name }}
+          solution-type: Unmanaged
+          overwrite-files: true
+      - name: Commit to feature branch and open draft PR
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $sol = '${{ inputs.solution_name }}'
+          $tag = $sol.Replace('Contoso','').ToLower()
+          $t = '${{ inputs.ticket }}'
+          $branch = "feature/$tag-$t-${{ github.actor }}"
+          git config user.name 'pp-alm-bot'
+          git config user.email 'pp-alm-bot@users.noreply.github.com'
+          git checkout -b $branch
+          git add "src/solutions/$sol"
+          git commit -m "chore($tag): export ${{ inputs.ticket }}"
+          git push --set-upstream origin $branch
+          gh pr create --draft --base main --head $branch `
+            --title "${{ inputs.ticket }}: $sol changes" `
+            --body-file .github/pull_request_template.md
