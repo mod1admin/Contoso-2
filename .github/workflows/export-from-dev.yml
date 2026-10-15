@@ -76,4 +76,4 @@ jobs:
           git push --set-upstream origin $branch
           gh pr create --draft --base main --head $branch `
             --title "${{ inputs.ticket }}: $sol changes" `
-            --body-file .github/pull_request_template.md
+            --body-file pull_request_template.md
